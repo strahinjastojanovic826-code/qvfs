@@ -1,0 +1,13 @@
+[package]
+name = "qvfs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Strale <strahinjastojanovic826@gmail.com>"]
+description = "A quaternary virtual file system (QVFS) simulator based on 4-state logic."
+license = "AGPL-3.0-or-later" 
+repository = "https://github.com/tvoj-username/qvfs"
+readme = "README.md"
+keywords = ["vfs", "quaternary", "filesystem", "simulation"]
+categories = ["filesystem", "emulators"]
+
+[dependencies]
