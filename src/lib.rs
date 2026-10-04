@@ -1,313 +1,300 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::io::{Error, ErrorKind, Result};
-use std::sync::{Arc, Mutex};
+pub mod buffer;
+pub mod quat;
+pub mod traits;
+pub mod vfs;
+pub mod virtual_file;
+pub mod compressed_file;
+pub mod error;
+pub mod ffi;
 
-// ==========================================
-// 1. TIPOVI DATA I KONVERZIJE (Quat & DNA)
-// ==========================================
+// Re-exportovanje osnovnih tipova za lakši uvoz
+pub use buffer::QuatBuffer;
+pub use quat::Quat;
+pub use traits::{QuatFile, QuatFileSystem};
+pub use vfs::{FileHandle, MemoryQuatVFS};
+pub use virtual_file::VirtualQuatFile;
+pub use compressed_file::CompressedQuatFile;
+use crate::ffi::*;
+pub use std::os::raw::c_int;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Quat {
-    Q0 = 0b00, // 0 - Adenin  (A)
-    Q1 = 0b01, // 1 - Citozin (C)
-    Q2 = 0b10, // 2 - Guanin  (G)
-    Q3 = 0b11, // 3 - Timin   (T)
-}
 
-impl Quat {
-    pub fn from_u8(val: u8) -> Self {
-        match val & 0b11 {
-            0b00 => Quat::Q0,
-            0b01 => Quat::Q1,
-            0b10 => Quat::Q2,
-            _ => Quat::Q3,
-        }
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::QuatBuffer;
+    use crate::compressed_file::CompressedQuatFile;
+    use crate::error::{QuatError, Result};
+    use crate::quat::Quat;
+    use crate::traits::{QuatFile, QuatFileSystem};
+    use crate::vfs::MemoryQuatVFS;
+    use std::sync::Arc;
+    use std::ffi::CString;
+    use std::ptr;
+    use std::thread;
 
-    pub fn as_u8(self) -> u8 {
-        self as u8
-    }
+    #[test]
+    fn test_quat_conversions() -> Result<()> {
+        assert_eq!(Quat::try_from('A')?, Quat::Q0);
+        assert_eq!(Quat::try_from('C')?, Quat::Q1);
+        assert_eq!(Quat::try_from('G')?, Quat::Q2);
+        assert_eq!(Quat::try_from('T')?, Quat::Q3);
 
-    pub fn from_char(c: char) -> Option<Self> {
-        match c.to_ascii_uppercase() {
-            'A' => Some(Quat::Q0),
-            'C' => Some(Quat::Q1),
-            'G' => Some(Quat::Q2),
-            'T' => Some(Quat::Q3),
-            _ => None,
-        }
-    }
-
-    pub fn as_char(self) -> char {
-        match self {
-            Quat::Q0 => 'A',
-            Quat::Q1 => 'C',
-            Quat::Q2 => 'G',
-            Quat::Q3 => 'T',
-        }
-    }
-}
-
-impl fmt::Display for Quat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}({})", self, self.as_char())
-    }
-}
-
-// ==========================================
-// 2. OPTIMIZOVANI QuatBuffer (Sa podrškom za overwrite)
-// ==========================================
-
-#[derive(Debug, Clone, Default)]
-pub struct QuatBuffer {
-    data: Vec<u8>,
-    len_quats: usize,
-}
-
-impl QuatBuffer {
-    pub fn new() -> Self {
-        Self {
-            data: Vec::new(),
-            len_quats: 0,
-        }
-    }
-
-    pub fn push(&mut self, quat: Quat) {
-        let byte_idx = self.len_quats / 4;
-        let shift = (self.len_quats % 4) * 2;
-
-        if byte_idx >= self.data.len() {
-            self.data.push(0);
-        }
-
-        self.data[byte_idx] &= !(0b11 << shift);
-        self.data[byte_idx] |= quat.as_u8() << shift;
-        self.len_quats += 1;
-    }
-
-    /// Izmena postojećeg kvata na specifičnom indeksu
-    pub fn set(&mut self, index: usize, quat: Quat) -> bool {
-        if index >= self.len_quats {
-            return false;
-        }
-
-        let byte_idx = index / 4;
-        let shift = (index % 4) * 2;
-
-        self.data[byte_idx] &= !(0b11 << shift);
-        self.data[byte_idx] |= quat.as_u8() << shift;
-        true
-    }
-
-    pub fn get(&self, index: usize) -> Option<Quat> {
-        if index >= self.len_quats {
-            return None;
-        }
-
-        let byte_idx = index / 4;
-        let shift = (index % 4) * 2;
-
-        let raw = (self.data[byte_idx] >> shift) & 0b11;
-        Some(Quat::from_u8(raw))
-    }
-
-    pub fn len(&self) -> usize {
-        self.len_quats
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len_quats == 0
-    }
-}
-
-// ==========================================
-// 3. VFS TRAIT INTERFEJS
-// ==========================================
-
-pub trait QuatFile {
-    fn read_quat(&mut self) -> Result<Option<Quat>>;
-    fn write_quat(&mut self, quat: Quat) -> Result<()>;
-    fn seek_quat(&mut self, quat_offset: usize) -> Result<usize>;
-    fn len(&self) -> usize;
-}
-
-pub trait QuatFileSystem {
-    type FileHandle;
-
-    fn open(&mut self, path: &str) -> Result<Self::FileHandle>;
-    fn create(&mut self, path: &str) -> Result<Self::FileHandle>;
-    fn delete(&mut self, path: &str) -> Result<()>;
-}
-
-// ==========================================
-// 4. IN-MEMORY VFS IMPLEMENTACIJA
-// ==========================================
-
-#[derive(Debug, Clone, Default)]
-pub struct VirtualQuatFile {
-    buffer: QuatBuffer,
-    cursor: usize,
-}
-
-impl VirtualQuatFile {
-    pub fn new() -> Self {
-        Self {
-            buffer: QuatBuffer::new(),
-            cursor: 0,
-        }
-    }
-}
-
-impl QuatFile for VirtualQuatFile {
-    fn read_quat(&mut self) -> Result<Option<Quat>> {
-        let quat = self.buffer.get(self.cursor);
-        if quat.is_some() {
-            self.cursor += 1;
-        }
-        Ok(quat)
-    }
-
-    fn write_quat(&mut self, quat: Quat) -> Result<()> {
-        if self.cursor < self.buffer.len() {
-            // Overwrite postojećeg kvata na poziciji kursora
-            self.buffer.set(self.cursor, quat);
-        } else {
-            // Dopisivanje na kraj
-            self.buffer.push(quat);
-        }
-        self.cursor += 1;
+        assert!(Quat::try_from('X').is_err());
         Ok(())
     }
 
-    fn seek_quat(&mut self, quat_offset: usize) -> Result<usize> {
-        if quat_offset <= self.buffer.len() {
-            self.cursor = quat_offset;
-            Ok(self.cursor)
-        } else {
-            Err(Error::new(ErrorKind::UnexpectedEof, "Seek beyond file boundaries"))
-        }
-    }
+    #[test]
+    fn test_vfs_overwrite_and_delete() -> Result<()> {
+        let mut vfs = MemoryQuatVFS::new();
+        let mut file_handle = vfs.create("/test.quat")?;
 
-    fn len(&self) -> usize {
-        self.buffer.len()
-    }
-}
-
-// Nitno-bezbedni pokazivač na deljeni fajl (Arc + Mutex umesto Rc + RefCell)
-pub type FileHandle = Arc<Mutex<VirtualQuatFile>>;
-
-pub struct MemoryQuatVFS {
-    files: HashMap<String, FileHandle>,
-}
-
-impl MemoryQuatVFS {
-    pub fn new() -> Self {
-        Self {
-            files: HashMap::new(),
-        }
-    }
-
-    pub fn save_to_disk(&self, vfs_path: &str, real_disk_path: &str) -> Result<()> {
-        if let Some(file_handle) = self.files.get(vfs_path) {
-            let file = file_handle.lock().map_err(|_| {
-                Error::new(ErrorKind::Other, "Thread locking problem (Mutex poison)")
-            })?;
-            std::fs::write(real_disk_path, &file.buffer.data)?;
-            Ok(())
-        } else {
-            Err(Error::new(ErrorKind::NotFound, "The file does not exist in VFS"))
-        }
-    }
-
-    pub fn load_from_disk(&mut self, real_disk_path: &str, vfs_path: &str) -> Result<FileHandle> {
-        let bytes = std::fs::read(real_disk_path)?;
-        let mut quat_buffer = QuatBuffer::new();
-
-        for byte in bytes {
-            for shift in (0..4).map(|i| i * 2) {
-                let q_val = (byte >> shift) & 0b11;
-                quat_buffer.push(Quat::from_u8(q_val));
-            }
-        }
-
-        let virt_file = VirtualQuatFile {
-            buffer: quat_buffer,
-            cursor: 0,
-        };
-
-        let handle = Arc::new(Mutex::new(virt_file));
-        self.files.insert(vfs_path.to_string(), Arc::clone(&handle));
-        Ok(handle)
-    }
-}
-
-impl QuatFileSystem for MemoryQuatVFS {
-    type FileHandle = FileHandle;
-
-    fn open(&mut self, path: &str) -> Result<Self::FileHandle> {
-        self.files
-            .get(path)
-            .cloned()
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "File not found"))
-    }
-
-    fn create(&mut self, path: &str) -> Result<Self::FileHandle> {
-        let file = Arc::new(Mutex::new(VirtualQuatFile::new()));
-        self.files.insert(path.to_string(), Arc::clone(&file));
-        Ok(file)
-    }
-
-    fn delete(&mut self, path: &str) -> Result<()> {
-        if self.files.remove(path).is_some() {
-            Ok(())
-        } else {
-            Err(Error::new(ErrorKind::NotFound, "File not found"))
-        }
-    }
-}
-
-// ==========================================
-// 5. TEST OVERWRITE I VFS FUNKCIONALNOSTI
-// ==========================================
-
-fn main() -> Result<()> {
-    println!("=== Testing the Fixed Quat VFS Library ===\n");
-
-    let mut vfs = MemoryQuatVFS::new();
-    let file_handle = vfs.create("/test.quat")?;
-
-    // 1. Upisivanje niza "AAAA"
-    {
-        let mut file = file_handle.lock().unwrap();
         for _ in 0..4 {
-            file.write_quat(Quat::Q0)?; // A
+            file_handle.write_quat(Quat::Q0)?; // AAAA
+        }
+
+        file_handle.seek_quat(1)?;
+        file_handle.write_quat(Quat::Q1)?; // ACAA
+
+        file_handle.seek_quat(0)?;
+        let mut read_chars = String::new();
+        while let Some(q) = file_handle.read_quat()? {
+            read_chars.push(q.as_char());
+        }
+
+        assert_eq!(read_chars, "ACAA");
+
+        vfs.delete("/test.quat")?;
+        assert!(vfs.open("/test.quat").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_vfs_seek_past_eof() -> Result<()> {
+        let mut vfs = MemoryQuatVFS::new();
+        let mut file_handle = vfs.create("/seek_test.quat")?;
+
+        file_handle.write_quat(Quat::Q3)?; // T na indeksu 0
+        file_handle.seek_quat(4)?;          // Pomak na indeks 4 (ostavlja rupu)
+        file_handle.write_quat(Quat::Q2)?; // G na indeksu 4
+
+        file_handle.seek_quat(0)?;
+        let mut buf = [Quat::Q0; 5];
+        let read_count = file_handle.read_exact_quats(&mut buf)?;
+
+        assert_eq!(read_count, 5);
+        // Očekujemo T, A, A, A, G jer su neupisana mjesta popunjena s Q0 (A)
+        assert_eq!(buf, [Quat::Q3, Quat::Q0, Quat::Q0, Quat::Q0, Quat::Q2]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_vfs_disk_io_and_magic_header() -> Result<()> {
+        let mut vfs = MemoryQuatVFS::new();
+        let mut handle = vfs.create("/dna.quat")?;
+
+        handle.write_quat(Quat::Q0)?; // A
+        handle.write_quat(Quat::Q1)?; // C
+        handle.write_quat(Quat::Q2)?; // G
+        handle.write_quat(Quat::Q3)?; // T
+
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("temp_dna.bin");
+        let temp_path_str = temp_path.to_str().unwrap();
+
+        vfs.save_to_disk("/dna.quat", temp_path_str)?;
+
+        let loaded_handle = vfs.load_from_disk(temp_path_str, "/loaded_dna.quat")?;
+        let mut read_buf = [Quat::Q0; 4];
+        let mut loaded_file = loaded_handle;
+
+        let count = loaded_file.read_exact_quats(&mut read_buf)?;
+        assert_eq!(count, 4);
+        assert_eq!(read_buf, [Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3]);
+
+        let _ = std::fs::remove_file(temp_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_vfs_stress_large_data() -> Result<()> {
+        let mut vfs = MemoryQuatVFS::new();
+        let mut handle = vfs.create("/stress.quat")?;
+        let total_quats = 100_000;
+
+        for i in 0..total_quats {
+            let q = Quat::from_u8_masked((i % 4) as u8);
+            handle.write_quat(q)?;
+        }
+
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join("temp_stress.bin");
+        let temp_path_str = temp_path.to_str().unwrap();
+
+        vfs.save_to_disk("/stress.quat", temp_path_str)?;
+
+        let mut loaded_handle = vfs.load_from_disk(temp_path_str, "/loaded_stress.quat")?;
+        assert_eq!(loaded_handle.len(), total_quats);
+
+        loaded_handle.seek_quat(0)?;
+        for i in 0..total_quats {
+            let expected = Quat::from_u8_masked((i % 4) as u8);
+            let read = loaded_handle.read_quat()?.unwrap();
+            assert_eq!(read, expected, "Mismatch at index {}", i);
+        }
+
+        let _ = std::fs::remove_file(temp_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_vfs_concurrent_thread_safety() -> Result<()> {
+        let vfs = Arc::new(std::sync::Mutex::new(MemoryQuatVFS::new()));
+        let file_handle = vfs.lock().unwrap().create("/concurrent.quat")?;
+
+        let mut handles = vec![];
+
+        for i in 0..8 {
+            let mut handle_clone = file_handle.clone();
+            let handle = thread::spawn(move || {
+                let quat = Quat::from_u8_masked((i % 4) as u8);
+                handle_clone.write_quat(quat)
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap()?;
+        }
+
+        assert_eq!(file_handle.len(), 8);
+        Ok(())
+    }
+
+    #[test]
+fn test_vfs_corrupted_disk_header() {
+    let temp_dir = std::env::temp_dir();
+    let bad_header_path = temp_dir.join("corrupted_header.bin");
+
+    // Zapisujemo 12 neispravnih bajtova (ne počinju sa "QVFS")
+    let bad_bytes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    std::fs::write(&bad_header_path, bad_bytes).unwrap();
+
+    let vfs = MemoryQuatVFS::new();
+    let result = vfs.load_from_disk(bad_header_path.to_str().unwrap(), "/bad.quat");
+
+    assert!(result.is_err());
+    assert!(matches!(result, Err(QuatError::InvalidHeader)));
+
+    let _ = std::fs::remove_file(bad_header_path);
+}
+
+    #[test]
+    fn test_compressed_quat_file_read_only() -> Result<()> {
+        let mut buf = QuatBuffer::new();
+        buf.push(Quat::Q2);
+        buf.push(Quat::Q3);
+
+        let mut compressed_file = CompressedQuatFile::new(buf);
+
+        assert_eq!(compressed_file.read_quat()?, Some(Quat::Q2));
+        assert_eq!(compressed_file.read_quat()?, Some(Quat::Q3));
+        assert_eq!(compressed_file.read_quat()?, None);
+
+        let write_res = compressed_file.write_quat(Quat::Q0);
+        assert!(write_res.is_err());
+        assert!(matches!(write_res, Err(QuatError::PermissionDenied(_))));
+
+        Ok(())
+    }
+    #[test]
+    fn test_ffi_vfs_lifecycle() {
+        unsafe {
+            let vfs = qvfs_vfs_new();
+            assert!(!vfs.is_null());
+
+            let path = CString::new("test.bin").unwrap();
+            let mut handle: *mut FileHandle = ptr::null_mut();
+
+            // Kreiranje fajla
+            let res = qvfs_vfs_create(vfs, path.as_ptr(), &mut handle);
+            assert_eq!(res, 0);
+            assert!(!handle.is_null());
+
+            // Pisanje kvata (0=Q0, 1=Q1, 2=Q2, 3=Q3)
+            assert_eq!(qvfs_file_write_quat(handle, 0), 0);
+            assert_eq!(qvfs_file_write_quat(handle, 3), 0);
+
+            // Provera dužine
+            let mut len: usize = 0;
+            assert_eq!(qvfs_file_len(handle, &mut len), 0);
+            assert_eq!(len, 2);
+
+            // Seek na početak
+            let mut new_pos: usize = 0;
+            assert_eq!(qvfs_file_seek(handle, 0, &mut new_pos), 0);
+            assert_eq!(new_pos, 0);
+
+            // Čitanje prvog kvata
+            let mut val: u8 = 255;
+            let mut has_val: c_int = 0;
+            assert_eq!(qvfs_file_read_quat(handle, &mut val, &mut has_val), 0);
+            assert_eq!(has_val, 1);
+            assert_eq!(val, 0);
+
+            // Čitanje drugog kvata
+            assert_eq!(qvfs_file_read_quat(handle, &mut val, &mut has_val), 0);
+            assert_eq!(has_val, 1);
+            assert_eq!(val, 3);
+
+            // Oslobađanje memorije
+            qvfs_file_free(handle);
+            qvfs_vfs_free(vfs);
         }
     }
 
-    // 2. Testiranje Overwrite-a na poziciji 1 (menjamo drugi 'A' u 'C')
-    {
-        let mut file = file_handle.lock().unwrap();
-        file.seek_quat(1)?;
-        file.write_quat(Quat::Q1)?; // Menjamo u C
-    }
-
-    // 3. Provera rezultata
-    {
-        let mut file = file_handle.lock().unwrap();
-        file.seek_quat(0)?;
-
-        print!("The result after the change in the middle (expected ACGA/ACAA): ");
-        while let Some(q) = file.read_quat()? {
-            print!("{}", q.as_char());
+    #[test]
+    fn test_ffi_null_safety() {
+        unsafe {
+            // Svi pozivi sa NULL pokazivačima moraju vratiti -1 umesto da sruše aplikaciju
+            assert_eq!(qvfs_vfs_create(ptr::null_mut(), ptr::null(), ptr::null_mut()), -1);
+            assert_eq!(qvfs_vfs_open(ptr::null_mut(), ptr::null(), ptr::null_mut()), -1);
+            assert_eq!(qvfs_vfs_delete(ptr::null_mut(), ptr::null()), -1);
+            assert_eq!(qvfs_file_write_quat(ptr::null_mut(), 0), -1);
+            assert_eq!(qvfs_file_write_quat(ptr::null_mut(), 99), -1); // Nevalidan kvat (>3)
+            assert_eq!(qvfs_file_read_quat(ptr::null_mut(), ptr::null_mut(), ptr::null_mut()), -1);
         }
-        println!();
     }
 
-    // 4. Testiranje Brisanja
-    vfs.delete("/test.quat")?;
-    println!("File successfully deleted from VFS.");
+    #[test]
+    fn test_ffi_batch_read() {
+        unsafe {
+            let vfs = qvfs_vfs_new();
+            let path = CString::new("batch.bin").unwrap();
+            let mut handle: *mut FileHandle = ptr::null_mut();
 
-    Ok(())
+            qvfs_vfs_create(vfs, path.as_ptr(), &mut handle);
+
+            // Upis 4 kvata (Q0, Q1, Q2, Q3)
+            for q in 0..4 {
+                qvfs_file_write_quat(handle, q);
+            }
+
+            // Seek na početak
+            let mut new_pos: usize = 0;
+            qvfs_file_seek(handle, 0, &mut new_pos);
+
+            // Čitanje u bafer
+            let mut buf = [0u8; 4];
+            let mut read_count: usize = 0;
+            let res = qvfs_file_read_exact_quats(handle, buf.as_mut_ptr(), 4, &mut read_count);
+
+            assert_eq!(res, 0);
+            assert_eq!(read_count, 4);
+            assert_eq!(buf, [0, 1, 2, 3]);
+
+            qvfs_file_free(handle);
+            qvfs_vfs_free(vfs);
+        }
+    }
+    
 }
