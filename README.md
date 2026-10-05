@@ -23,7 +23,16 @@ Add `qvfs` to your `Cargo.toml`:
 [dependencies]
 qvfs = "2.1.0"
 ```
+## Licensing
 
+QVFS is dual-licensed:
+
+1. **Open Source (AGPL-3.0)**: Free to use for open-source projects under the terms of the GNU Affero General Public License v3.0.
+2. **Commercial License**: If you wish to use QVFS in proprietary software or closed-source commercial products without AGPL-3.0 restrictions, you must acquire a commercial license.
+
+For commercial licensing inquiries, contact: `strahinjastojanovic826@gmail.com`
+
+```
 ### Basic Example
 
 ```rust
