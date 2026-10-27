@@ -14,7 +14,6 @@ pub use traits::{QuatFile, QuatFileSystem};
 pub use vfs::{FileHandle, MemoryQuatVFS};
 pub use virtual_file::VirtualQuatFile;
 pub use compressed_file::CompressedQuatFile;
-use crate::ffi::*;
 pub use std::os::raw::c_int;
 
 
@@ -31,6 +30,17 @@ mod tests {
     use std::ffi::CString;
     use std::ptr;
     use std::thread;
+    use crate::ffi::qvfs_vfs_new;
+    use crate::ffi::qvfs_vfs_create;
+    use crate::ffi::qvfs_file_write_quat;
+    use crate::ffi::qvfs_file_len;
+    use crate::ffi::qvfs_file_seek;
+    use crate::ffi::qvfs_file_read_quat;
+    use crate::ffi::qvfs_file_free;
+    use crate::ffi::qvfs_vfs_open;
+    use crate::ffi::qvfs_vfs_delete;
+    use crate::ffi::qvfs_vfs_free;
+    use crate::ffi::qvfs_file_read_exact_quats;
 
     #[test]
     fn test_quat_conversions() -> Result<()> {
@@ -174,9 +184,10 @@ mod tests {
 fn test_vfs_corrupted_disk_header() {
     let temp_dir = std::env::temp_dir();
     let bad_header_path = temp_dir.join("corrupted_header.bin");
-
-    // Zapisujemo 12 neispravnih bajtova (ne počinju sa "QVFS")
-    let bad_bytes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    
+    // Šaljemo 16 ili više bajtova da prođe provjeru dužine (< 16),
+    // ali prva 4 bajta NISU "QVFS" (pa će puknuti na InvalidHeader)
+    let bad_bytes: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
     std::fs::write(&bad_header_path, bad_bytes).unwrap();
 
     let vfs = MemoryQuatVFS::new();
@@ -296,5 +307,47 @@ fn test_vfs_corrupted_disk_header() {
             qvfs_vfs_free(vfs);
         }
     }
+    #[test]
+fn test_quaternary_logic_operations() {
+    assert_eq!(Quat::Q0.q_not(), Quat::Q3);
+    assert_eq!(Quat::Q1.q_not(), Quat::Q2);
+    
+    assert_eq!(Quat::Q0.q_and(Quat::Q3), Quat::Q0);
+    assert_eq!(Quat::Q1.q_or(Quat::Q2), Quat::Q3);
+    assert_eq!(Quat::Q2.q_xor(Quat::Q2), Quat::Q0);
+}
+
+#[test]
+fn test_vfs_transform_file_logical() -> Result<()> {
+    let mut vfs = MemoryQuatVFS::new();
+    let handle = vfs.create("/logic.quat")?;
+    
+    {
+        let mut file = handle.lock().unwrap();
+        file.write_quat(Quat::Q0)?; 
+        file.write_quat(Quat::Q1)?; 
+    }
+
+    // Primjenjujemo q_not logičku operaciju na cijeli fajl u hodu
+    vfs.transform_file_logical("/logic.quat", |q| q.q_not())?;
+
+    let mut file = handle.lock().unwrap();
+    file.seek_quat(0)?;
+    assert_eq!(file.read_quat()?, Some(Quat::Q3)); // Q0 postao Q3
+    assert_eq!(file.read_quat()?, Some(Quat::Q2)); // Q1 postao Q2
+
+    Ok(())
+}
+
+#[test]
+fn test_quat_buffer_iterators() {
+    let mut buf = QuatBuffer::new();
+    buf.push(Quat::Q0);
+    buf.push(Quat::Q1);
+    buf.push(Quat::Q2);
+
+    let collected: Vec<Quat> = buf.iter().collect();
+    assert_eq!(collected, vec![Quat::Q0, Quat::Q1, Quat::Q2]);
+}
     
 }

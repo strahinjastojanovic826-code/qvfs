@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::buffer::QuatBuffer;
-use crate::error::{QuatError, Result};
+use crate::error::Result;
 use crate::quat::Quat;
 use crate::traits::QuatFile;
 

@@ -14,6 +14,10 @@ Unlike standard binary file systems operating strictly on bits (0 and 1), `qvfs`
 * **Binary Persistence with Magic Header:** Custom file format with a mandatory 4-byte `QVFS` header and high-performance serialization (`save_to_disk` / `load_from_disk`).
 * **Compressed File Extensions:** Support for read-only compressed quat structures via `CompressedQuatFile` and buffer-based search operations (`QuatBuffer`).
 * **Custom Error Handling:** Strongly-typed `QuatError` enum for exact failure diagnosis (header corruption, invalid characters, permission issues).
+* **Quaternary Logic Gates:** Built-in multi-valued logic operations (`q_not`, `q_and`, `q_or`, `q_xor`) for quaternary states.
+* **Standard Rust Iterators:** Full `Iterator` and `IntoIterator` support for `QuatBuffer` allowing seamless functional programming (`.map()`, `.filter()`, etc.).
+* **Data Integrity & Checksum:** Built-in FNV-1a checksum validation embedded in disk headers to protect against data corruption.
+* **VFS Logical Transformations:** In-place logical transformations on virtual files via `transform_file_logical`.
 
 ## Quickstart
 
@@ -21,7 +25,7 @@ Add `qvfs` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qvfs = "2.1.0"
+qvfs = "2.2.0"
 ```
 
 ### Basic Example
@@ -81,7 +85,37 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+```
 
+### Advanced Features Example
+
+```rust
+fn main() -> Result<(), QuatError> {
+    let mut vfs = MemoryQuatVFS::new();
+    let _handle = vfs.create("/sample.quat")?;
+
+    // --- 1. Using standard Rust iterators ---
+    let mut buffer = QuatBuffer::new();
+    buffer.push(Quat::Q0);
+    buffer.push(Quat::Q1);
+    buffer.push(Quat::Q2);
+
+    for quat in buffer.iter() {
+        println!("Quat nucleotide: {}", quat.as_char());
+    }
+
+    // --- 2. Quaternary logical operations ---
+    let base = Quat::Q1; // 'C'
+    let inverted = base.q_not(); // Returns Quat::Q2 ('G')
+    let _combined = base.q_and(Quat::Q3);
+
+    println!("Inverted: {}", inverted.as_char());
+
+    // --- 3. VFS logical transformation on-the-fly ---
+    vfs.transform_file_logical("/sample.quat", |q| q.q_not())?;
+
+    Ok(())
+}
 ```
 
 ## Specification

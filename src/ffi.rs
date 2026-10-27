@@ -10,24 +10,24 @@ use crate::vfs::{FileHandle, MemoryQuatVFS};
 // VFS (MemoryQuatVFS)
 // -----------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn qvfs_vfs_new() -> *mut MemoryQuatVFS {
     Box::into_raw(Box::new(MemoryQuatVFS::new()))
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn qvfs_vfs_free(vfs: *mut MemoryQuatVFS) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_vfs_free(vfs: *mut MemoryQuatVFS) { unsafe {
     if !vfs.is_null() {
         drop(Box::from_raw(vfs));
     }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_vfs_create(
     vfs: *mut MemoryQuatVFS,
     path: *const c_char,
     out_handle: *mut *mut FileHandle,
-) -> c_int {
+) -> c_int { unsafe {
     if vfs.is_null() || path.is_null() || out_handle.is_null() {
         return -1;
     }
@@ -42,14 +42,14 @@ pub unsafe extern "C" fn qvfs_vfs_create(
         }
         Err(_) => -1,
     }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_vfs_open(
     vfs: *mut MemoryQuatVFS,
     path: *const c_char,
     out_handle: *mut *mut FileHandle,
-) -> c_int {
+) -> c_int { unsafe {
     if vfs.is_null() || path.is_null() || out_handle.is_null() {
         return -1;
     }
@@ -64,10 +64,10 @@ pub unsafe extern "C" fn qvfs_vfs_open(
         }
         Err(_) => -1,
     }
-}
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn qvfs_vfs_delete(vfs: *mut MemoryQuatVFS, path: *const c_char) -> c_int {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_vfs_delete(vfs: *mut MemoryQuatVFS, path: *const c_char) -> c_int { unsafe {
     if vfs.is_null() || path.is_null() {
         return -1;
     }
@@ -76,14 +76,14 @@ pub unsafe extern "C" fn qvfs_vfs_delete(vfs: *mut MemoryQuatVFS, path: *const c
         Err(_) => return -1,
     };
     if (*vfs).delete(c_str).is_ok() { 0 } else { -1 }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_vfs_save_to_disk(
     vfs: *mut MemoryQuatVFS,
     vfs_path: *const c_char,
     real_disk_path: *const c_char,
-) -> c_int {
+) -> c_int { unsafe {
     if vfs.is_null() || vfs_path.is_null() || real_disk_path.is_null() {
         return -1;
     }
@@ -96,15 +96,15 @@ pub unsafe extern "C" fn qvfs_vfs_save_to_disk(
         Err(_) => return -1,
     };
     if (*vfs).save_to_disk(v_path, r_path).is_ok() { 0 } else { -1 }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_vfs_load_from_disk(
     vfs: *mut MemoryQuatVFS,
     real_disk_path: *const c_char,
     vfs_path: *const c_char,
     out_handle: *mut *mut FileHandle,
-) -> c_int {
+) -> c_int { unsafe {
     if vfs.is_null() || real_disk_path.is_null() || vfs_path.is_null() || out_handle.is_null() {
         return -1;
     }
@@ -123,25 +123,25 @@ pub unsafe extern "C" fn qvfs_vfs_load_from_disk(
         }
         Err(_) => -1,
     }
-}
+}}
 
 // -----------------------------------------------------------------------------
 // FileHandle (QuatFile)
 // -----------------------------------------------------------------------------
 
-#[no_mangle]
-pub unsafe extern "C" fn qvfs_file_free(handle: *mut FileHandle) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_file_free(handle: *mut FileHandle) { unsafe {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
     }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_file_read_quat(
     handle: *mut FileHandle,
     out_quat: *mut u8,
     out_has_val: *mut c_int,
-) -> c_int {
+) -> c_int { unsafe {
     if handle.is_null() || out_quat.is_null() || out_has_val.is_null() {
         return -1;
     }
@@ -161,10 +161,10 @@ pub unsafe extern "C" fn qvfs_file_read_quat(
         }
         Err(_) => -1,
     }
-}
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn qvfs_file_write_quat(handle: *mut FileHandle, quat_val: u8) -> c_int {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_file_write_quat(handle: *mut FileHandle, quat_val: u8) -> c_int { unsafe {
     if handle.is_null() || quat_val > 3 {
         return -1;
     }
@@ -179,14 +179,14 @@ pub unsafe extern "C" fn qvfs_file_write_quat(handle: *mut FileHandle, quat_val:
         Err(_) => return -1,
     };
     if file.write_quat(quat).is_ok() { 0 } else { -1 }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_file_seek(
     handle: *mut FileHandle,
     offset: usize,
     out_new_offset: *mut usize,
-) -> c_int {
+) -> c_int { unsafe {
     if handle.is_null() || out_new_offset.is_null() {
         return -1;
     }
@@ -201,10 +201,10 @@ pub unsafe extern "C" fn qvfs_file_seek(
         }
         Err(_) => -1,
     }
-}
+}}
 
-#[no_mangle]
-pub unsafe extern "C" fn qvfs_file_len(handle: *mut FileHandle, out_len: *mut usize) -> c_int {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_file_len(handle: *mut FileHandle, out_len: *mut usize) -> c_int { unsafe {
     if handle.is_null() || out_len.is_null() {
         return -1;
     }
@@ -214,15 +214,15 @@ pub unsafe extern "C" fn qvfs_file_len(handle: *mut FileHandle, out_len: *mut us
     };
     *out_len = file.len();
     0
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qvfs_file_read_exact_quats(
     handle: *mut FileHandle,
     out_buf: *mut u8,
     buf_len: usize,
     out_read_count: *mut usize,
-) -> c_int {
+) -> c_int { unsafe {
     if handle.is_null() || out_buf.is_null() || out_read_count.is_null() {
         return -1;
     }
@@ -243,4 +243,4 @@ pub unsafe extern "C" fn qvfs_file_read_exact_quats(
         }
         Err(_) => -1,
     }
-}
+}}

@@ -30,6 +30,32 @@ impl Quat {
             Quat::Q3 => 'T',
         }
     }
+    pub fn q_not(self) -> Self {
+        match self {
+            Quat::Q0 => Quat::Q3,
+            Quat::Q1 => Quat::Q2,
+            Quat::Q2 => Quat::Q1,
+            Quat::Q3 => Quat::Q0,
+        }
+    }
+
+    /// Quaternary AND operation (Bitwise minimum / intersection)
+    pub fn q_and(self, other: Self) -> Self {
+        let val = (self as u8) & (other as u8);
+        Quat::from_u8_masked(val)
+    }
+
+    /// Quaternary OR operation (Bitwise maximum / union)
+    pub fn q_or(self, other: Self) -> Self {
+        let val = (self as u8) | (other as u8);
+        Quat::from_u8_masked(val)
+    }
+
+    /// Quaternary XOR operation (Difference / modulo-4 addition logic)
+    pub fn q_xor(self, other: Self) -> Self {
+        let val = ((self as u8) ^ (other as u8)) & 0b11;
+        Quat::from_u8_masked(val)
+    }
 }
 
 impl TryFrom<u8> for Quat {
