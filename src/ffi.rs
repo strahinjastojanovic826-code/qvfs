@@ -244,3 +244,68 @@ pub unsafe extern "C" fn qvfs_file_read_exact_quats(
         Err(_) => -1,
     }
 }}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_asm_pack_buffer(
+    src: *const u8,
+    src_len: usize,
+    dest: *mut u8,
+    dest_len: usize,
+) -> i32 { unsafe {
+    if src.is_null() || dest.is_null() {
+        return -1; // Null pointer error code for ASM
+    }
+
+    let required_dest_len = (src_len + 3) / 4;
+    if dest_len < required_dest_len {
+        return -2; // Buffer too small error code
+    }
+
+    let src_slice = std::slice::from_raw_parts(src, src_len);
+    let dest_slice = std::slice::from_raw_parts_mut(dest, required_dest_len);
+
+    // Clear destination bytes first
+    for b in dest_slice.iter_mut() {
+        *b = 0;
+    }
+
+    for (i, &val) in src_slice.iter().enumerate() {
+        let byte_index = i / 4;
+        let shift = 6 - ((i % 4) * 2);
+        dest_slice[byte_index] |= (val & 0b11) << shift;
+    }
+
+    0 // Success status code for Assembly registers
+}}
+
+/// Raw, flat function for Assembly to unpack 2-bit quats into a flat destination array
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_asm_unpack_buffer(
+    src: *const u8,
+    src_len: usize,
+    quat_count: usize,
+    dest: *mut u8,
+    dest_len: usize,
+) -> i32 { unsafe {
+    if src.is_null() || dest.is_null() {
+        return -1;
+    }
+    if dest_len < quat_count {
+        return -2;
+    }
+
+    let src_slice = std::slice::from_raw_parts(src, src_len);
+    let dest_slice = std::slice::from_raw_parts_mut(dest, quat_count);
+
+    for i in 0..quat_count {
+        let byte_index = i / 4;
+        if byte_index >= src_slice.len() {
+            break;
+        }
+        let shift = 6 - ((i % 4) * 2);
+        let val = (src_slice[byte_index] >> shift) & 0b11;
+        dest_slice[i] = val;
+    }
+
+    0
+}}
