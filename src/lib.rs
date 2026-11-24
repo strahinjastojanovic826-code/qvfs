@@ -48,6 +48,8 @@ mod tests {
     use crate::ffi::qvfs_vfs_delete;
     use crate::ffi::qvfs_vfs_free;
     use crate::ffi::qvfs_file_read_exact_quats;
+    use std::time::Duration;
+    use std::time::Instant;
 
     #[test]
 fn test_quat_conversions() -> Result<()> {
@@ -587,5 +589,256 @@ fn test_container_performance_and_validity() -> Result<()> {
     let _ = fs::remove_file(container_path);
     Ok(())
 }
-    
+
+  #[test]
+    fn test_quat_mod4_and_complement_ops() -> Result<()> {
+        // --- BENCHMARK START ---
+        let start: Instant = std::time::Instant::now();
+
+        assert_eq!(Quat::Q0.complement(), Quat::Q3);
+        assert_eq!(Quat::Q1.complement(), Quat::Q2);
+        assert_eq!(Quat::Q0.q_add_mod4(Quat::Q3), Quat::Q3);
+        assert_eq!(Quat::Q2.q_add_mod4(Quat::Q2), Quat::Q0);
+        assert_eq!(Quat::Q0.q_sub_mod4(Quat::Q1), Quat::Q3);
+        assert_eq!(Quat::Q0.q_inc(), Quat::Q1);
+        assert_eq!(Quat::Q0.q_dec(), Quat::Q3);
+
+        let packed = Quat::pack_4([Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3]);
+        assert_eq!(packed, 0b00_01_10_11);
+        assert_eq!(
+            Quat::unpack_4(packed),
+            [Quat::Q0, Quat::Q1, Quat::Q2, Quat::Q3]
+        );
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_quat_mod4_and_complement_ops: Quaternary mod-4 & pack/unpack in {:?}",
+            duration
+        );
+        // --- BENCHMARK END ---
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_buffer_batch_swar_and_hamming() -> Result<()> {
+        // --- BENCHMARK START ---
+        let start: Instant = std::time::Instant::now();
+
+        let total = 10_000usize;
+        let input_quats: Vec<Quat> = (0..total)
+            .map(|i| Quat::from_u8_masked((i % 4) as u8))
+            .collect();
+
+        let mut buf_a = QuatBuffer::new();
+        buf_a.extend_from_quats(&input_quats);
+        assert_eq!(buf_a.len_quats, total);
+
+        let unpacked = buf_a.to_quat_vec();
+        assert_eq!(unpacked, input_quats);
+
+        let mut slice_out = vec![Quat::Q0; 128];
+        let read_n = buf_a.unpack_into_slice(17, &mut slice_out);
+        assert_eq!(read_n, 128);
+        assert_eq!(slice_out, &input_quats[17..17 + 128]);
+
+        let counts = buf_a.count_states();
+        assert!(counts[0] >= 2500);
+        assert_eq!(counts[1], 2500);
+        assert_eq!(counts[2], 2500);
+        assert_eq!(counts[3], 2500);
+
+        let mut buf_b = QuatBuffer::new();
+        buf_b.extend_from_quats(&vec![Quat::Q0; total]);
+        assert_eq!(buf_a.hamming_distance(&buf_b), Some(7500));
+
+        let sum_buf = buf_a.batch_add_mod4(&buf_b).unwrap();
+        assert_eq!(sum_buf.to_quat_vec(), input_quats);
+
+        let mut comp_buf = buf_a.clone();
+        comp_buf.complement_in_place();
+        assert_eq!(comp_buf.get(0), Some(Quat::Q3));
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_buffer_batch_swar_and_hamming: Batch & SWAR ops on {} quats in {:?}",
+            total, duration
+        );
+        // --- BENCHMARK END ---
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dna_fast_batch_conversion() -> Result<()> {
+        use crate::dna::DnaStorage;
+
+        // --- BENCHMARK START ---
+        let start: Instant = std::time::Instant::now();
+
+        let dna_seq = "ACGTACGTACGTACGTACGTACGTACGTACGT";
+        let buf = DnaStorage::bytes_to_buffer(dna_seq.as_bytes())?;
+        assert_eq!(buf.len_quats, dna_seq.len());
+
+        let roundtrip = DnaStorage::buffer_to_dna_fast(&buf);
+        assert_eq!(roundtrip, dna_seq);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_dna_fast_batch_conversion: Fast DNA encode/decode in {:?}",
+            duration
+        );
+        // --- BENCHMARK END ---
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_versioned_frame_and_rle_compression() -> Result<()> {
+        use crate::compressed_file::CompressedQuatFile;
+        use crate::vfs::{decode_versioned_frame, encode_versioned_frame, QVFS_FLAG_NONE};
+
+        // --- BENCHMARK START ---
+        let start: Instant = std::time::Instant::now();
+
+        let mut buf = QuatBuffer::new();
+        buf.extend_from_quats(&vec![Quat::Q2; 64]);
+        buf.extend_from_quats(&vec![Quat::Q1; 36]);
+
+        let encoded = encode_versioned_frame(&buf.data, buf.len_quats as u64, QVFS_FLAG_NONE)?;
+        let (flags, total_quats, payload) = decode_versioned_frame(&encoded)?;
+        assert_eq!(flags, QVFS_FLAG_NONE);
+        assert_eq!(total_quats, 100);
+        assert_eq!(payload, buf.data);
+
+        let segments = CompressedQuatFile::segment_quats(&buf, 32);
+        assert_eq!(segments.len(), 4);
+
+        let rle = CompressedQuatFile::compress_rle_quats(&buf);
+        let decompressed = CompressedQuatFile::decompress_rle_quats(&rle, buf.len_quats)?;
+        assert_eq!(decompressed, buf);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_versioned_frame_and_rle_compression: QVFH v1, segment & RLE in {:?}",
+            duration
+        );
+        // --- BENCHMARK END ---
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_wal_replay_and_commit_truncate() -> Result<()> {
+        use crate::wal::WriteAheadLog;
+        use std::fs;
+        use std::path::PathBuf;
+
+        // --- BENCHMARK START ---
+        let start: Instant = std::time::Instant::now();
+
+        let wal_path: PathBuf = std::env::temp_dir().join("qvfs_test_replay_fixed.wal");
+        let _ = fs::remove_file(&wal_path);
+        let wal_str = wal_path.to_str().unwrap();
+
+        {
+            let mut wal = WriteAheadLog::new(wal_str)?;
+            wal.log_begin()?;
+            wal.log_write(0, Quat::Q1)?;
+            wal.log_write(1, Quat::Q2)?;
+            wal.commit()?;
+
+            wal.log_begin()?;
+            wal.log_write(2, Quat::Q3)?;
+        }
+
+        let mut target = QuatBuffer::new();
+        {
+            let mut wal = WriteAheadLog::new(wal_str)?;
+            let applied = wal.replay_committed(&mut target)?;
+            assert_eq!(applied, 2);
+            assert_eq!(target.get(0), Some(Quat::Q1));
+            assert_eq!(target.get(1), Some(Quat::Q2));
+            assert_eq!(target.get(2), None);
+
+            wal.commit()?;
+        }
+
+        assert!(std::path::Path::new(&wal_path).exists());
+        let _ = fs::remove_file(&wal_path);
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_wal_replay_and_commit_truncate: WAL replay & commit in {:?}",
+            duration
+        );
+        // --- BENCHMARK END ---
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ffi_strict_write_and_exists() -> Result<()> {
+        use crate::ffi::{
+            qvfs_file_free, qvfs_file_read_quat, qvfs_file_seek, qvfs_file_write_quat_strict,
+            qvfs_vfs_create, qvfs_vfs_exists, qvfs_vfs_free, qvfs_vfs_new, QvfsFfiStatus,
+        };
+        use crate::FileHandle;
+        use std::ffi::CString;
+        use std::os::raw::c_int;
+        use std::ptr;
+
+        // --- BENCHMARK START ---
+        let start: Instant = std::time::Instant::now();
+
+        unsafe {
+            let vfs = qvfs_vfs_new();
+            assert!(!vfs.is_null());
+
+            let path = CString::new("/strict.quat").unwrap();
+            let mut handle: *mut FileHandle = ptr::null_mut();
+            assert_eq!(qvfs_vfs_create(vfs, path.as_ptr(), &mut handle), 0);
+
+            let mut exists: c_int = 0;
+            assert_eq!(
+                qvfs_vfs_exists(vfs, path.as_ptr(), &mut exists),
+                QvfsFfiStatus::Ok as c_int
+            );
+            assert_eq!(exists, 1);
+
+            assert_eq!(
+                qvfs_file_write_quat_strict(handle, 2),
+                QvfsFfiStatus::Ok as c_int
+            );
+            assert_eq!(
+                qvfs_file_write_quat_strict(handle, 9),
+                QvfsFfiStatus::ErrInvalidQuatValue as c_int
+            );
+
+            let mut new_pos = 0usize;
+            assert_eq!(qvfs_file_seek(handle, 0, &mut new_pos), 0);
+
+            let mut q_val = 0u8;
+            let mut has_val: c_int = 0;
+            assert_eq!(
+                qvfs_file_read_quat(handle, &mut q_val, &mut has_val),
+                0
+            );
+            assert_eq!(has_val, 1);
+            assert_eq!(q_val, 2);
+
+            qvfs_file_free(handle);
+            qvfs_vfs_free(vfs);
+        }
+
+        let duration: Duration = start.elapsed();
+        println!(
+            "[BENCHMARK] test_ffi_strict_write_and_exists: FFI strict validation in {:?}",
+            duration
+        );
+        // --- BENCHMARK END ---
+
+        Ok(())
+    }
+
 }

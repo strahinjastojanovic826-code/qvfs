@@ -1,3 +1,10 @@
+// FFI Safety Invariants:
+// All `unsafe extern "C"` functions in this module assume callers satisfy C ABI contracts:
+// non-null pointers where required, null-terminated C strings valid for the call duration,
+// properly sized and aligned raw byte/quat buffers (`0..=3`, 2 bits per quat) without
+// overlapping mutable aliasing, and heap handles (`MemoryQuatVFS`, `FileHandle`) allocated
+// via `Box::into_raw` and freed at most once via their corresponding `*_free` functions.
+
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::slice;
@@ -309,3 +316,131 @@ pub unsafe extern "C" fn qvfs_asm_unpack_buffer(
 
     0
 }}
+
+/// Explicit C FFI status codes for industrial error handling.
+#[repr(i32)]
+pub enum QvfsFfiStatus {
+    Ok = 0,
+    ErrNullPointer = -1,
+    ErrInvalidUtf8 = -2,
+    ErrInvalidQuatValue = -3,
+    ErrBufferTooSmall = -4,
+    ErrLockPoisoned = -5,
+    ErrIoOrVfs = -6,
+}
+
+/// Strict version of `qvfs_file_write_quat` that explicitly rejects `quat_val > 3`
+/// instead of silently coercing invalid values into `Q3`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_file_write_quat_strict(
+    handle: *mut FileHandle,
+    quat_val: u8,
+) -> c_int {
+    unsafe {
+        if handle.is_null() {
+            return QvfsFfiStatus::ErrNullPointer as c_int;
+        }
+        if quat_val > 3 {
+            return QvfsFfiStatus::ErrInvalidQuatValue as c_int;
+        }
+
+        let quat = match quat_val {
+            0 => Quat::Q0,
+            1 => Quat::Q1,
+            2 => Quat::Q2,
+            3 => Quat::Q3,
+            _ => return QvfsFfiStatus::ErrInvalidQuatValue as c_int,
+        };
+
+        let mut file = match (*handle).lock() {
+            Ok(guard) => guard,
+            Err(_) => return QvfsFfiStatus::ErrLockPoisoned as c_int,
+        };
+
+        if file.write_quat(quat).is_ok() {
+            QvfsFfiStatus::Ok as c_int
+        } else {
+            QvfsFfiStatus::ErrIoOrVfs as c_int
+        }
+    }
+}
+
+/// Writes a batch of raw quaternary bytes (`0..=3` per byte) into a `FileHandle`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_file_write_quats_batch(
+    handle: *mut FileHandle,
+    quats_ptr: *const u8,
+    quats_len: usize,
+    out_written: *mut usize,
+) -> c_int {
+    unsafe {
+        if handle.is_null() || out_written.is_null() {
+            return QvfsFfiStatus::ErrNullPointer as c_int;
+        }
+        if quats_len > 0 && quats_ptr.is_null() {
+            return QvfsFfiStatus::ErrNullPointer as c_int;
+        }
+
+        let input_slice = if quats_len == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(quats_ptr, quats_len)
+        };
+
+        for &val in input_slice {
+            if val > 3 {
+                return QvfsFfiStatus::ErrInvalidQuatValue as c_int;
+            }
+        }
+
+        let mut file = match (*handle).lock() {
+            Ok(guard) => guard,
+            Err(_) => return QvfsFfiStatus::ErrLockPoisoned as c_int,
+        };
+
+        let mut written = 0usize;
+        for &val in input_slice {
+            let q = match val {
+                0 => Quat::Q0,
+                1 => Quat::Q1,
+                2 => Quat::Q2,
+                _ => Quat::Q3,
+            };
+            if file.write_quat(q).is_err() {
+                *out_written = written;
+                return QvfsFfiStatus::ErrIoOrVfs as c_int;
+            }
+            written += 1;
+        }
+
+        *out_written = written;
+        QvfsFfiStatus::Ok as c_int
+    }
+}
+
+/// Checks whether a virtual path exists in `MemoryQuatVFS` (`*out_exists = 1` or `0`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qvfs_vfs_exists(
+    vfs: *const MemoryQuatVFS,
+    path: *const c_char,
+    out_exists: *mut c_int,
+) -> c_int {
+    unsafe {
+        if vfs.is_null() || path.is_null() || out_exists.is_null() {
+            return QvfsFfiStatus::ErrNullPointer as c_int;
+        }
+
+        let c_str = match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => return QvfsFfiStatus::ErrInvalidUtf8 as c_int,
+        };
+
+        let files = match (*vfs).files.read() {
+            Ok(guard) => guard,
+            Err(_) => return QvfsFfiStatus::ErrLockPoisoned as c_int,
+        };
+
+        *out_exists = if files.contains_key(c_str) { 1 } else { 0 };
+        QvfsFfiStatus::Ok as c_int
+    }
+}

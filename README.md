@@ -33,30 +33,37 @@ For commercial licensing, contact: **strahinjastojanovic826@gmail.com**
 * **Asynchronous VFS Support:** Non-blocking asynchronous file saving and loading powered by Tokio (`async_vfs.rs`)[cite: 20].
 * **Assembly-Friendly FFI:** Flat, raw-pointer `extern "C"` functions optimized for direct integration with Assembly and low-level systems (`ffi.rs`)[cite: 20].
 * **Quaternary-to-Symbolic Mapping:** Flexible domain mapping for 4-state quaternary data (`Q0`, `Q1`, `Q2`, `Q3`)[cite: 20].
+* **Batch & SWAR Buffer Operations:** Vectorized packing/unpacking, state counting, Hamming distance, modulo-4 arithmetic, and in-place complement on `QuatBuffer`.
+* **Versioned `QVFH` v1 Framing & RLE:** Header-versioned binary frame encoding/decoding alongside quaternary segmentation and run-length compression/decompression.
+* **WAL Replay & Truncation Controls:** Committed-transaction replay (`replay_committed`) and log truncation (`commit_and_truncate`) to isolate uncommitted writes.
+* **Strict & Batch C FFI:** Explicit `QvfsFfiStatus` error codes, strict quaternary input validation (`qvfs_file_write_quat_strict`), batch writes (`qvfs_file_write_quats_batch`), and path existence checks (`qvfs_vfs_exists`).
 
 ## Benchmark tests
 
-| Test / Component | Detailed description of what the test does and measures | Benchmark / Time |
+| Test / Benchmark Name | Workload / Scenario | Measured Time |
 | :--- | :--- | :--- |
-| **`test_quaternary_logic_operations`** | Calculation and testing of quaternary bitwise/logical operations (`q_not`, `q_and`, `q_or`, `q_xor`)[cite: 21] | **500ns**[cite: 21] |
-| **`test_quat_conversions`** | Precise mapping of characters to quaternary values (`A, C, G, T` to `Q0, Q1, Q2, Q3`)[cite: 21] | **1.8µs**[cite: 21] |
-| **`test_quat_buffer_iterators`** | Traversal, iteration, and element extraction through packed `QuatBuffer`[cite: 21] | **7.8µs**[cite: 21] |
-| **`test_vfs_seek_past_eof`** | Moving pointer past the end of file (EOF), automatic hole padding with Q0, and exact read[cite: 21] | **10.4µs**[cite: 21] |
-| **`test_vfs_transform_file_logical`** | Applying in-place logical transformations (e.g., `q_not`) to an entire file on-the-fly within VFS[cite: 21] | **15.2µs**[cite: 21] |
-| **`test_compressed_quat_file_read_only`** | Validation of read-only mode for compressed buffer and unauthorized write protection check[cite: 21] | **27.7µs**[cite: 21] |
-| **`test_vfs_overwrite_and_delete`** | Complete VFS lifecycle of creation, writing, seeking, overwriting, reading, and deletion[cite: 21] | **19.2µs**[cite: 21] |
-| **`test_vfs_disk_io_and_magic_header`** | Disk saving, magic header validation ("QVFS"), and exact loading/reading of quats[cite: 21] | **624.2µs**[cite: 21] |
-| **`test_vfs_corrupted_disk_header`** | Error handling and protection validation for corrupted binary headers (`InvalidHeader`)[cite: 21] | **760.5µs**[cite: 21] |
-| **`test_async_vfs_throughput`** | Tokio Async VFS: Asynchronous saving and loading of 5,000 quaternary units[cite: 21] | **1.069ms**[cite: 21] |
-| **`test_vfs_concurrent_thread_safety`** | Multi-threaded safety with concurrent writes distributed across 8 parallel threads[cite: 21] | **1.2357ms**[cite: 21] |
-| **`test_mmap_vfs_speed_and_safety`** | Memory-mapped file (`MmapQuatFile`): Execution of 10,000 random reads and writes[cite: 21] | **1.6681ms**[cite: 21] |
-| **`test_container_performance_and_validity`** | Single-file container (`QuatContainer`): Packaging and writing 100 virtual files into a single container[cite: 21] | **4.8158ms**[cite: 21] |
-| **`test_wal_transaction_logging`** | Transactional WAL logs: Writing and committing 1,000 transaction logs[cite: 21] | **14.39ms**[cite: 21] |
-| **`test_vfs_stress_large_data`** | Stress test with 100,000 quats: Writing, saving to disk, loading, and byte-by-byte verification[cite: 21] | **18.8233ms**[cite: 21] |
-| **`test_assembly_ffi_packing_performance`** | ASM FFI layer: Execution of 100,000 raw byte packaging iterations[cite: 21] | **19.4141ms**[cite: 21] |
-| **`test_ffi_batch_read`** | FFI testing of batch reading an exact number of quats from a memory buffer | - |
-| **`test_ffi_null_safety`** | FFI testing of safety against NULL pointers to prevent application crashes | - |
-| **`test_ffi_vfs_lifecycle`** | Complete lifecycle test of the FFI layer (creation, allocation, operation, and safe deallocation) | - |
+| `test_quaternary_logic_operations` | `Quat` bitwise logical calculations[cite: 25, 26] | `400ns`[cite: 25, 26] |
+| `test_quat_mod4_and_complement_ops` | Quaternary mod-4 & pack/unpack operations[cite: 25, 26] | `700ns`[cite: 25, 26] |
+| `test_quat_conversions` | Character-to-quat mappings[cite: 25, 26] | `1.7µs`[cite: 25] |
+| `test_quat_buffer_iterators` | `QuatBuffer` iteration traversal[cite: 25] | `2.3µs`[cite: 25] |
+| `test_dna_fast_batch_conversion` | Fast DNA encode/decode[cite: 25, 26] | `10.7µs`[cite: 25] |
+| `test_vfs_seek_past_eof` | Seek past EOF padding & exact read[cite: 25, 26] | `14.7µs`[cite: 25] |
+| `test_ffi_strict_write_and_exists` | FFI strict validation (`qvfs_file_write_quat_strict` & `qvfs_vfs_exists`)[cite: 25] | `17.3µs`[cite: 25] |
+| `test_vfs_transform_file_logical` | In-place file VFS logic transformations[cite: 26] | `19µs`[cite: 26] |
+| `test_compressed_quat_file_read_only` | Read-only buffer validation[cite: 25] | `19.3µs`[cite: 25] |
+| `test_vfs_overwrite_and_delete` | VFS creation, write, seek, overwrite, read & delete[cite: 25, 26] | `20µs`[cite: 25] |
+| `test_versioned_frame_and_rle_compression` | `QVFH` v1 framing, segmentation & RLE compression/decompression[cite: 25, 26] | `42.5µs`[cite: 25] |
+| `test_vfs_disk_io_and_magic_header` | Disk save, load, header & exact quat read[cite: 25, 26] | `545.4µs`[cite: 25] |
+| `test_vfs_concurrent_thread_safety` | Multi-threaded concurrent writes across 8 threads[cite: 25, 26] | `661.1µs`[cite: 25] |
+| `test_async_vfs_throughput` | Tokio Async VFS: save & load 5,000 quats[cite: 25] | `724.2µs`[cite: 25] |
+| `test_vfs_corrupted_disk_header` | Error handling validation for corrupted binary headers[cite: 25, 26] | `730.5µs`[cite: 25] |
+| `test_wal_replay_and_commit_truncate` | WAL replay & commit[cite: 25, 26] | `937.9µs`[cite: 25] |
+| `test_buffer_batch_swar_and_hamming` | Batch & SWAR operations on 10,000 quats[cite: 25, 26] | `1.3128ms`[cite: 25] |
+| `test_mmap_vfs_speed_and_safety` | `MmapQuatFile`: 10,000 random read/writes[cite: 25, 26] | `1.5717ms`[cite: 25] |
+| `test_container_performance_and_validity` | `QuatContainer`: 100 files packed & written[cite: 25, 26] | `5.0657ms`[cite: 25] |
+| `test_wal_transaction_logging_benchmark` | WAL: 1,000 transaction logs written & committed[cite: 26] | `16.3779ms`[cite: 26] |
+| `test_vfs_stress_large_data` | 100,000 quats written, saved, loaded & verified[cite: 26] | `19.6196ms`[cite: 26] |
+| `test_assembly_ffi_packing_performance` | ASM FFI pack: 100,000 iterations executed[cite: 26] | `21.2389ms`[cite: 26] |
 
 ## Quickstart
 
@@ -64,7 +71,7 @@ Add `qvfs` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qvfs = "2.3.0"
+qvfs = "2.4.0"
 ```
 
 ### Basic Example
@@ -186,6 +193,53 @@ fn main() -> Result<(), QuatError> {
 }
 ```
 
+### Batch, SWAR & Versioned Persistence Example
+
+```rust
+use qvfs::buffer::QuatBuffer;
+use qvfs::compressed_file::CompressedQuatFile;
+use qvfs::dna::DnaStorage;
+use qvfs::error::Result;
+use qvfs::quat::Quat;
+use qvfs::vfs::{decode_versioned_frame, encode_versioned_frame, QVFS_FLAG_NONE};
+use qvfs::wal::WriteAheadLog;
+
+fn main() -> Result<()> {
+    // 1. Fast batch DNA encoding & decoding
+    let buf = DnaStorage::bytes_to_buffer(b"ACGTACGT")?;
+    let dna_str = DnaStorage::buffer_to_dna_fast(&buf);
+    assert_eq!(dna_str, "ACGTACGT");
+
+    // 2. SWAR state counting & modulo-4 arithmetic
+    let counts = buf.count_states();
+    let shifted = buf.batch_add_mod4(&buf).unwrap();
+    assert_eq!(counts, [2, 2, 2, 2]);
+    assert_eq!(shifted.len_quats, 8);
+
+    // 3. Versioned QVFH v1 frame & RLE compression
+    let frame = encode_versioned_frame(&buf.data, buf.len_quats as u64, QVFS_FLAG_NONE)?;
+    let (_flags, total_quats, _payload) = decode_versioned_frame(&frame)?;
+    assert_eq!(total_quats, 8);
+
+    let rle = CompressedQuatFile::compress_rle_quats(&buf);
+    let restored = CompressedQuatFile::decompress_rle_quats(&rle, buf.len_quats)?;
+    assert_eq!(restored, buf);
+
+    // 4. WAL transaction & replay
+    let mut wal = WriteAheadLog::new("example.wal")?;
+    wal.log_begin()?;
+    wal.log_write(0, Quat::Q2)?;
+    wal.commit()?;
+
+    let mut replay_buf = QuatBuffer::new();
+    let _ = wal.replay_committed(&mut replay_buf)?;
+    let _ = std::fs::remove_file("example.wal");
+
+    Ok(())
+}
+```
+
+
 ## Specification
 
 The library encodes states using 2 bits per quat:
@@ -222,6 +276,16 @@ int32_t qvfs_vfs_create(MemoryQuatVFS* vfs, const char* path, FileHandle** out_h
 void qvfs_file_free(FileHandle* handle);
 int32_t qvfs_file_write_quat(FileHandle* handle, uint8_t quat_val);
 
+// Safer & batch quaternary FFI functions (values 0..=3)
+int32_t qvfs_file_write_quat_strict(FileHandle* handle, uint8_t quat_val);
+int32_t qvfs_file_write_quats_batch(
+    FileHandle* handle,
+    const uint8_t* quats_ptr,
+    size_t quats_len,
+    size_t* out_written
+);
+int32_t qvfs_vfs_exists(const MemoryQuatVFS* vfs, const char* path, int32_t* out_exists);
+
 #ifdef __cplusplus
 }
 #endif
@@ -240,6 +304,15 @@ int main(void) {
 
     if (qvfs_vfs_create(vfs, "c_test.bin", &file) == 0) {
         qvfs_file_write_quat(file, 1);
+
+        int32_t exists = 0;
+        if (qvfs_vfs_exists(vfs, "c_test.bin", &exists) == 0 && exists == 1) {
+            uint8_t batch[3] = {0, 2, 3};
+            size_t written = 0;
+            qvfs_file_write_quats_batch(file, batch, 3, &written);
+            qvfs_file_write_quat_strict(file, 1);
+        }
+
         qvfs_file_free(file);
     }
 

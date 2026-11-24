@@ -86,16 +86,8 @@ impl QuatFile for VirtualQuatFile {
     }
 
     fn read_exact_quats(&mut self, buf: &mut [Quat]) -> Result<usize> {
-        let mut count = 0;
-        for target in buf.iter_mut() {
-            if let Some(quat) = self.buffer.get(self.cursor) {
-                *target = quat;
-                self.cursor += 1;
-                count += 1;
-            } else {
-                break;
-            }
-        }
+        let count = self.buffer.unpack_into_slice(self.cursor, buf);
+        self.cursor += count;
         Ok(count)
     }
 }
