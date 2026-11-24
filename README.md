@@ -71,7 +71,7 @@ Add `qvfs` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qvfs = "2.4.0"
+qvfs = "2.4.1"
 ```
 
 ### Basic Example
